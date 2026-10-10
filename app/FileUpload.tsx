@@ -21,13 +21,14 @@ function dateOrder(label: string): number | null {
   const time = Date.parse(label);
   return Number.isFinite(time) ? time : null;
 }
-function ChartPanel({ data, title }: { data: Point[]; title: string }) {
+function ChartPanel({ data, title, mode }: { data: Point[]; title: string; mode: "line" | "bar" | "area" }) {
   if (!data.length) return <div className="flex h-72 items-center justify-center text-sm text-slate-500">Select a date column and numeric metric to see trends.</div>;
   const width = 800, height = 260, left = 18, right = 18, top = 25, bottom = 35;
   const values = data.map((d) => d.value);
   let min = Math.min(...values), max = Math.max(...values);
   const pad = Math.max((max - min) * 0.15, Math.abs(max) * 0.05, 1);
   min -= pad; max += pad;
+  if (mode === "bar") { min = Math.min(0,min); max = Math.max(0,max); }
   const coords = data.map((d, i) => ({ x: left + (data.length === 1 ? 0.5 : i / (data.length - 1)) * (width - left - right), y: top + (1 - (d.value - min) / (max - min)) * (height - top - bottom), ...d }));
   const path = coords.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
   const area = `${path} L${coords[coords.length - 1].x},${height - bottom} L${coords[0].x},${height - bottom} Z`;
@@ -37,8 +38,9 @@ function ChartPanel({ data, title }: { data: Point[]; title: string }) {
     <svg viewBox={`0 0 ${width} ${height}`} className="h-72 w-full sm:h-80 xl:h-[360px]" role="img" aria-label={`${title} trend chart`}>
       <defs><linearGradient id="trendArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#24d7ec" stopOpacity=".28"/><stop offset="100%" stopColor="#9164f7" stopOpacity="0"/></linearGradient><linearGradient id="trendStroke" x1="0" y1="0" x2="1" y2="0"><stop stopColor="#a879ff"/><stop offset="100%" stopColor="#21e4ed"/></linearGradient></defs>
       {[0,1,2,3,4].map((i) => <g key={i}><line x1={left} x2={width-right} y1={top+i*(height-top-bottom)/4} y2={top+i*(height-top-bottom)/4} stroke="#26344d" strokeDasharray="4 6"/><text x={left+4} y={top+i*(height-top-bottom)/4-5} fill="#71829e" fontSize="10">{compact(max-i*(max-min)/4)}</text></g>)}
-      {coords.length > 1 && <><path d={area} fill="url(#trendArea)"/><path d={path} fill="none" stroke="url(#trendStroke)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/></>}
-      {coords.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={i === coords.length-1 ? 5 : 2.5} fill={i && p.value < coords[i-1].value ? "#fb7185" : "#22d3ee"} stroke="#111a30" strokeWidth="2"><title>{p.label}: {format(p.value)}</title></circle>)}
+      {mode !== "bar" && coords.length > 1 && <>{mode === "area" && <path d={area} fill="url(#trendArea)"/>}<path d={path} fill="none" stroke="url(#trendStroke)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/></>}
+      {mode === "bar" && coords.map((p,i) => <rect key={i} x={p.x-Math.min(18,320/coords.length)} y={Math.min(p.y,top+(1-(0-min)/(max-min))*(height-top-bottom))} width={Math.min(36,640/coords.length)} height={Math.max(1,Math.abs(top+(1-(0-min)/(max-min))*(height-top-bottom)-p.y))} rx="3" fill={i && p.value<coords[i-1].value ? "#fb7185" : "#22d3ee"}><title>{p.label}: {format(p.value)}</title></rect>)}
+      {mode !== "bar" && coords.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={i === coords.length-1 ? 5 : 2.5} fill={i && p.value < coords[i-1].value ? "#fb7185" : "#22d3ee"} stroke="#111a30" strokeWidth="2"><title>{p.label}: {format(p.value)}</title></circle>)}
       {[0,Math.floor((coords.length-1)/2),coords.length-1].filter((v,i,a)=>a.indexOf(v)===i).map((i) => <text key={i} x={coords[i].x} y={height-7} textAnchor={i===0 ? "start" : i===coords.length-1 ? "end" : "middle"} fontSize="11" fill="#94a3b8">{coords[i].label.slice(0,16)}</text>)}
     </svg>
     <div className="mt-2 flex gap-4 text-xs text-slate-400"><span><span className="mr-2 inline-block h-2 w-2 rounded-full bg-cyan-400"/>Higher / stable</span><span><span className="mr-2 inline-block h-2 w-2 rounded-full bg-rose-400"/>Lower than previous period</span></div>
@@ -55,10 +57,12 @@ export default function FileUpload() {
   const [date, setDate] = useState("");
   const [filter, setFilter] = useState("All");
   const [view, setView] = useState<"overview" | "data">("overview");
+  const [chartMode, setChartMode] = useState<"line" | "bar" | "area">("area");
+  const [showUploader, setShowUploader] = useState(false);
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setError(""); setFileName(""); setRows([]); setColumns([]); setLoading(true); setFilter("All"); setView("overview");
+    setError(""); setFileName(""); setRows([]); setColumns([]); setLoading(true); setFilter("All"); setView("overview"); setShowUploader(false);
     try {
       const extension = file.name.split(".").pop()?.toLowerCase();
       if (extension !== "csv" && extension !== "xlsx") throw new Error("Please upload an XLSX or CSV file.");
@@ -125,6 +129,21 @@ export default function FileUpload() {
   let donutCursor = 0;
   const donut = positiveGroups.length && donutTotal > 0 ? `conic-gradient(${positiveGroups.slice(0,7).map((g,i)=>{ const start=donutCursor; donutCursor += g.value/donutTotal*100; return `${palette[i%palette.length]} ${start}% ${donutCursor}%`; }).join(", ")}${positiveGroups.length>7 ? `, #475569 ${donutCursor}% 100%` : ""})` : "conic-gradient(#26344d 0% 100%)";
   const lastChange = trend.length>1 ? trend[trend.length-1].value-trend[trend.length-2].value : null;
+  const previousValue = trend.length > 1 ? trend[trend.length-2].value : null;
+  const changePercent = lastChange !== null && previousValue !== null && previousValue !== 0 ? (lastChange / Math.abs(previousValue))*100 : null;
+  const targetColumn = detect(numericColumns, ["targetkg", "targetamount", "target", "budget", "goal"]);
+  const targetTotal = targetColumn ? filtered.reduce((sum,r)=>sum+(numberOf(r[targetColumn]) ?? 0),0) : null;
+  const targetAchievement = targetTotal !== null && targetTotal > 0 ? stats.total/targetTotal*100 : null;
+  const peakPeriod = trend.length ? trend.reduce((a,b)=>b.value>a.value?b:a) : null;
+  const weakestPeriod = trend.length ? trend.reduce((a,b)=>b.value<a.value?b:a) : null;
+  function downloadCSV() {
+    if (!columns.length) return;
+    const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g,'""')}"`;
+    const content = [columns.map(quote).join(","), ...filtered.map(row=>columns.map(col=>quote(row[col])).join(","))].join("\r\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF",content], {type:"text/csv;charset=utf-8"}));
+    const link = document.createElement("a"); link.href=url; link.download="datavision-filtered.csv"; link.click();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
   const cardData = [
     { label: `Total ${metric || "Metric"}`, value: compact(stats.total), detail: `${format(stats.valid)} valid values`, gradient: "from-fuchsia-500 via-purple-500 to-violet-500" },
     { label: "Average per record", value: compact(stats.average), detail: "Calculated from valid values", gradient: "from-cyan-400 via-sky-500 to-blue-600" },
@@ -135,7 +154,7 @@ export default function FileUpload() {
     <div className="overflow-hidden rounded-2xl border border-slate-700/60 bg-[#0d1425] shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
       <div className="flex flex-col lg:flex-row">
         <aside className="w-full shrink-0 border-b border-slate-700/60 bg-[#10162a] p-4 sm:p-6 lg:w-52 lg:border-b-0 lg:border-r 2xl:w-60">
-          <div className="mb-8 flex items-center gap-3"><div className="rounded-xl bg-gradient-to-br from-fuchsia-500 to-cyan-400 p-2 text-lg">◈</div><div><div className="font-bold tracking-tight">DataVision <span className="text-cyan-400">AI</span></div><div className="text-[10px] uppercase tracking-[.18em] text-slate-500">Analytics studio</div></div></div>
+          <div className="mb-8 rounded-xl border border-cyan-400/15 bg-cyan-400/5 px-3 py-3 text-xs font-semibold uppercase tracking-[.2em] text-cyan-300">◈ &nbsp; Workspace</div>
           <div className="mb-3 text-[10px] font-bold uppercase tracking-[.2em] text-slate-500">Workspace</div>
           <div className="flex flex-wrap gap-2 lg:flex-col">
             <button onClick={()=>setView("overview")} className={`rounded-xl px-4 py-3 text-left text-sm transition ${view==="overview" ? "bg-gradient-to-r from-purple-500/30 to-cyan-500/10 font-semibold text-fuchsia-200 ring-1 ring-purple-500/30" : "text-slate-400 hover:bg-slate-800"}`}>◫ &nbsp; Overview</button>
@@ -146,7 +165,17 @@ export default function FileUpload() {
         </aside>
         <main className="min-w-0 flex-1 space-y-5 bg-[radial-gradient(ellipse_at_top_right,rgba(114,57,202,0.10),transparent_50%)] p-4 sm:p-6 xl:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xs font-semibold uppercase tracking-[.2em] text-cyan-400">Intelligent business analytics</div><h2 className="mt-2 text-2xl font-bold sm:text-3xl">{view==="overview" ? "Analytics overview" : "Data explorer"}</h2><p className="mt-1 text-sm text-slate-400">{fileName ? `Analyzing ${fileName}` : "Upload a dataset to bring your dashboard to life"}</p></div><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-300">● {fileName ? "Dataset loaded" : "Ready to upload"}</span></div>
-          <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold">Import your dataset</h3><p className="mt-1 text-xs text-slate-400">CSV or Excel (.xlsx) · Up to 10 MB · Browser-based processing</p></div>{fileName && <span className="max-w-full break-all rounded-lg bg-cyan-400/10 px-3 py-2 text-xs text-cyan-300">✓ {fileName}</span>}</div><input aria-label="Upload CSV or Excel dataset" type="file" accept=".csv,.xlsx" onChange={handleUpload} disabled={loading} className="mt-3 block w-full cursor-pointer rounded-xl border border-dashed border-purple-400/40 bg-[#0e172b] p-2 text-sm text-slate-300 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-gradient-to-r file:from-fuchsia-500 file:to-purple-600 file:px-4 file:py-2 file:font-semibold file:text-white"/>{loading && <p className="mt-3 text-sm text-cyan-300">Processing file…</p>}{error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}</div>
+          <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><h3 className="font-semibold">{fileName ? "Current dataset" : "Import your dataset"}</h3><p className="mt-1 text-xs text-slate-400">{fileName ? `${fileName} · ${format(rows.length)} rows · ${columns.length} columns` : "CSV or Excel (.xlsx) · Up to 10 MB · Processed in your browser"}</p></div>
+              <div className="flex flex-wrap items-center gap-2">
+                {fileName && <button type="button" onClick={downloadCSV} className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700">↓ Export filtered CSV</button>}
+                {fileName && <button type="button" onClick={()=>setShowUploader(v=>!v)} className="rounded-lg bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25">{showUploader ? "Hide upload" : "↻ Change dataset"}</button>}
+              </div>
+            </div>
+            {(!fileName || showUploader) && <input aria-label="Upload CSV or Excel dataset" type="file" accept=".csv,.xlsx" onChange={handleUpload} disabled={loading} className="mt-3 block w-full cursor-pointer rounded-xl border border-dashed border-purple-400/40 bg-[#0e172b] p-3 text-sm text-slate-300 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-gradient-to-r file:from-fuchsia-500 file:to-purple-600 file:px-4 file:py-2 file:font-semibold file:text-white"/>}
+            {loading && <p className="mt-3 text-sm text-cyan-300">Processing file…</p>}{error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
+          </div>
           {fileName && <>
             <div className="grid gap-3 rounded-2xl border border-slate-700/70 bg-[#151e34] p-4 sm:grid-cols-2 xl:grid-cols-4">
               <label className="text-xs text-slate-400">Metric<select value={metric} onChange={(e)=>setMetric(e.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-[#0e172b] p-2.5 text-sm text-white"><option value="">No numeric metric</option>{numericColumns.map((col)=><option key={col} value={col}>{col}</option>)}</select></label>
@@ -156,8 +185,14 @@ export default function FileUpload() {
             </div>
             {view==="overview" ? <>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{cardData.map((card,i)=><div key={card.label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${card.gradient} p-5 shadow-lg`}><div className="absolute -right-7 -top-9 h-32 w-32 rounded-full bg-white/10"/><div className="relative"><div className="text-xs font-semibold text-white/85">{card.label}</div><div className="mt-5 break-words text-2xl font-extrabold tracking-tight text-white sm:text-3xl">{card.value}</div><div className="mt-3 text-xs text-white/80">{card.detail}</div></div><span className="absolute right-4 bottom-4 text-xl text-white/40">{["◈","⌁","↗","▦"][i]}</span></div>)}</div>
+              <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Performance intelligence">
+                <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="text-xs text-slate-400">Period-over-period growth</div><div className={`mt-2 text-2xl font-bold ${changePercent===null ? "text-slate-200" : changePercent<0 ? "text-rose-300" : "text-emerald-300"}`}>{changePercent===null ? "N/A" : `${changePercent>0?"+":""}${changePercent.toFixed(1)}%`}</div><div className="mt-2 text-xs text-slate-500">Compared with previous {date || "period"}</div></div>
+                <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="text-xs text-slate-400">Target achievement</div><div className="mt-2 text-2xl font-bold text-cyan-300">{targetAchievement===null ? "N/A" : `${targetAchievement.toFixed(1)}%`}</div><div className="mt-2 text-xs text-slate-500">{targetColumn ? `Based on ${targetColumn}` : "No target column detected"}</div></div>
+                <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="text-xs text-slate-400">Highest period</div><div className="mt-2 text-2xl font-bold text-white">{peakPeriod ? compact(peakPeriod.value) : "N/A"}</div><div className="mt-2 truncate text-xs text-slate-500" title={peakPeriod?.label}>{peakPeriod?.label || "Choose a time column"}</div></div>
+                <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="text-xs text-slate-400">Lowest period</div><div className="mt-2 text-2xl font-bold text-white">{weakestPeriod ? compact(weakestPeriod.value) : "N/A"}</div><div className="mt-2 truncate text-xs text-slate-500" title={weakestPeriod?.label}>{weakestPeriod?.label || "Choose a time column"}</div></div>
+              </section>
               <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,1fr)]">
-                <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><div className="mb-5"><h3 className="text-lg font-bold">Performance trends</h3><p className="mt-1 text-xs text-slate-400">Actual {metric || "metric"} totals grouped by {date || "period"}</p></div><ChartPanel data={trend} title={metric || "Metric"}/></section>
+                <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><div className="mb-5 flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-bold">Performance trends</h3><p className="mt-1 text-xs text-slate-400">Actual {metric || "metric"} totals grouped by {date || "period"}</p></div><div className="flex rounded-lg border border-slate-700 bg-[#0e172b] p-1">{(["area","line","bar"] as const).map(mode=><button key={mode} type="button" onClick={()=>setChartMode(mode)} aria-pressed={chartMode===mode} className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize ${chartMode===mode ? "bg-cyan-500/20 text-cyan-200" : "text-slate-400 hover:text-white"}`}>{mode}</button>)}</div></div><ChartPanel data={trend} title={metric || "Metric"} mode={chartMode}/></section>
                 <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><h3 className="text-lg font-bold">Category distribution</h3><p className="mt-1 text-xs text-slate-400">Share of positive {metric || "metric"} totals</p><div className="mx-auto mt-7 flex h-48 w-48 items-center justify-center rounded-full" style={{background:donut}}><div className="flex h-32 w-32 flex-col items-center justify-center rounded-full bg-[#151e34] text-center"><div className="text-2xl font-bold">{compact(donutTotal)}</div><div className="text-xs text-slate-400">Positive total</div></div></div><div className="mt-6 grid gap-2">{positiveGroups.slice(0,5).map((g,i)=><div key={g.label} className="flex items-center justify-between gap-3 text-xs"><span className="flex min-w-0 items-center gap-2 text-slate-300"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{backgroundColor:palette[i%palette.length]}}/><span className="truncate">{g.label}</span></span><span className="font-semibold">{donutTotal ? (g.value/donutTotal*100).toFixed(1) : "0"}%</span></div>)}{!positiveGroups.length && <p className="text-center text-sm text-slate-500">No positive category totals to display</p>}</div></section>
               </div>
               <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,1fr)]">
