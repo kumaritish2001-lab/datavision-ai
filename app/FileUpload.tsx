@@ -138,7 +138,7 @@ export default function FileUpload() {
     { label: "Records analyzed", value: format(stats.count), detail: `${format(rows.length)} in original file`, gradient: "from-pink-500 via-rose-500 to-orange-400" },
   ];
 
-  return <div className="mx-auto max-w-7xl text-slate-100">
+ return <div className="w-full max-w-none text-slate-100">
     <div className="overflow-hidden rounded-[28px] border border-slate-700/60 bg-[#0d1425] shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
       <div className="flex flex-col lg:flex-row">
         <aside className="w-full shrink-0 border-b border-slate-700/60 bg-[#10162a] p-6 lg:w-56 lg:border-b-0 lg:border-r">
