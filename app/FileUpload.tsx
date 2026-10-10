@@ -59,9 +59,12 @@ export default function FileUpload() {
   const [view, setView] = useState<"overview" | "data">("overview");
   const [chartMode, setChartMode] = useState<"line" | "bar" | "area">("area");
   const [showUploader, setShowUploader] = useState(false);
+  const [insightQuestion, setInsightQuestion] = useState("");
+  const [insightAnswer, setInsightAnswer] = useState("");
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    setInsightAnswer(""); setInsightQuestion("");
     setError(""); setFileName(""); setRows([]); setColumns([]); setLoading(true); setFilter("All"); setView("overview"); setShowUploader(false);
     try {
       const extension = file.name.split(".").pop()?.toLowerCase();
@@ -136,6 +139,46 @@ export default function FileUpload() {
   const targetAchievement = targetTotal !== null && targetTotal > 0 ? stats.total/targetTotal*100 : null;
   const peakPeriod = trend.length ? trend.reduce((a,b)=>b.value>a.value?b:a) : null;
   const weakestPeriod = trend.length ? trend.reduce((a,b)=>b.value<a.value?b:a) : null;
+  function answerDatasetQuestion(question: string) {
+    setInsightQuestion(question);
+    const q = question.toLowerCase().trim();
+    if (!fileName || !metric || !stats.valid) {
+      setInsightAnswer("Upload a dataset with a numeric metric to start exploring insights.");
+      return;
+    }
+    const scope = filter === "All" ? "all records" : `${category} = ${filter}`;
+    const best = groups[0];
+    const worst = groups.length ? groups[groups.length - 1] : null;
+    const fmt = (n: number) => format(n);
+    let response: string;
+    if (/why|cause|reason|explain/.test(q)) {
+      response = `The dataset shows ${lastChange === null ? "no comparable period change" : `a latest period change of ${fmt(lastChange)} ${metric}`} for ${scope}. These figures alone cannot establish why it happened. Investigate changes in operating hours, prices, demand, availability, or other relevant fields before attributing a cause.`;
+    } else if (/target|goal|budget|achievement|miss/.test(q)) {
+      response = targetAchievement === null
+        ? `No usable positive target total was detected for ${scope}. Select an appropriate metric and check whether your file contains a matching target column.`
+        : `For ${scope}, total ${metric} is ${fmt(stats.total)} against ${fmt(targetTotal ?? 0)} in ${targetColumn}, an achievement of ${targetAchievement.toFixed(1)}%. ${targetAchievement >= 100 ? "The aggregate target was met or exceeded." : "The aggregate target was not met."} Check that the metric and target use comparable units.`;
+    } else if (/decline|drop|growth|trend|increase|change|period/.test(q)) {
+      response = trend.length < 2
+        ? `At least two periods in ${date || "a time column"} are needed to calculate a change.`
+        : `Latest comparison (${trend[trend.length - 2].label} → ${trend[trend.length - 1].label}): ${fmt(trend[trend.length - 2].value)} → ${fmt(trend[trend.length - 1].value)} ${metric}, a change of ${fmt(lastChange ?? 0)}${changePercent === null ? "" : ` (${changePercent.toFixed(1)}%)`}. Highest period: ${peakPeriod?.label} (${fmt(peakPeriod?.value ?? 0)}). Lowest: ${weakestPeriod?.label} (${fmt(weakestPeriod?.value ?? 0)}).`;
+    } else if (/worst|lowest|bottom|underperform/.test(q)) {
+      response = worst ? `Lowest ${category} by total ${metric} for ${scope}: ${worst.label}, with ${fmt(worst.value)}. This ranks numerical totals, not necessarily business quality.` : `Choose a Group by column to compare categories.`;
+    } else if (/best|highest|top|station|category|perform/.test(q)) {
+      response = best ? `Highest ${category} by total ${metric} for ${scope}: ${best.label}, with ${fmt(best.value)}. ${worst && worst.label !== best.label ? `Lowest: ${worst.label} (${fmt(worst.value)}).` : ""} Ranking uses totals, not normalized efficiency.` : `Choose a Group by column to compare categories.`;
+    } else if (/missing|quality|valid|empty/.test(q)) {
+      response = `${fmt(stats.valid)} of ${fmt(stats.count)} filtered rows have numeric ${metric} values; ${fmt(stats.count - stats.valid)} do not. This check only assesses the selected metric, not overall dataset quality.`;
+    } else {
+      response = `Summary for ${scope}: ${fmt(stats.count)} records, ${fmt(stats.valid)} valid ${metric} values, total ${fmt(stats.total)}, average ${fmt(stats.average)}, highest individual value ${fmt(stats.maximum)}.${best ? ` Leading ${category}: ${best.label} (${fmt(best.value)}).` : ""}${changePercent === null ? "" : ` Latest period change: ${changePercent.toFixed(1)}%.`} Ask about best/worst groups, trends, targets, or missing values for a more specific answer.`;
+    }
+    setInsightAnswer(response);
+  }
+  function downloadInsights() {
+    if (!insightAnswer) return;
+    const content = `DataVision AI | Dataset insights\nDataset: ${fileName}\nMetric: ${metric}\nFilter: ${filter}\nQuestion: ${insightQuestion}\n\n${insightAnswer}\n\nGenerated from uploaded data using rule-based analysis; not a causal or AI language-model assessment.`;
+    const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "datavision-insights.txt"; link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   function downloadCSV() {
     if (!columns.length) return;
     const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g,'""')}"`;
@@ -190,6 +233,12 @@ export default function FileUpload() {
                 <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="text-xs text-slate-400">Target achievement</div><div className="mt-2 text-2xl font-bold text-cyan-300">{targetAchievement===null ? "N/A" : `${targetAchievement.toFixed(1)}%`}</div><div className="mt-2 text-xs text-slate-500">{targetColumn ? `Based on ${targetColumn}` : "No target column detected"}</div></div>
                 <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="text-xs text-slate-400">Highest period</div><div className="mt-2 text-2xl font-bold text-white">{peakPeriod ? compact(peakPeriod.value) : "N/A"}</div><div className="mt-2 truncate text-xs text-slate-500" title={peakPeriod?.label}>{peakPeriod?.label || "Choose a time column"}</div></div>
                 <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-4"><div className="text-xs text-slate-400">Lowest period</div><div className="mt-2 text-2xl font-bold text-white">{weakestPeriod ? compact(weakestPeriod.value) : "N/A"}</div><div className="mt-2 truncate text-xs text-slate-500" title={weakestPeriod?.label}>{weakestPeriod?.label || "Choose a time column"}</div></div>
+              </section>
+              <section className="rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-[#16243d] to-[#151e34] p-5 sm:p-6" aria-label="Dataset insights assistant">
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-xs font-semibold uppercase tracking-[.18em] text-cyan-400">DataVision Insights</div><h3 className="mt-2 text-xl font-bold">Ask questions about your dataset</h3><p className="mt-2 text-xs leading-5 text-slate-400">Instant, private, rule-based answers calculated from your current metric and filters. This is not yet a generative AI model.</p></div><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-300">Runs in your browser</span></div>
+                <div className="mt-5 flex flex-wrap gap-2">{["Summarize performance", "Which group performed best?", "How did the trend change?", "Did we meet the target?", "Why did sales decline?", "Check missing values"].map(q=><button type="button" key={q} onClick={()=>answerDatasetQuestion(q)} className="rounded-full border border-slate-600 bg-slate-900/60 px-3 py-2 text-xs text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200">{q}</button>)}</div>
+                <form className="mt-4 flex flex-col gap-2 sm:flex-row" onSubmit={e=>{e.preventDefault();answerDatasetQuestion(insightQuestion);}}><input value={insightQuestion} onChange={e=>setInsightQuestion(e.target.value)} placeholder="Ask about performance, trends, targets..." aria-label="Question about your dataset" className="min-w-0 flex-1 rounded-xl border border-slate-600 bg-[#0e172b] px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"/><button type="submit" disabled={!insightQuestion.trim()} className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">Analyze data →</button></form>
+                {insightAnswer && <div aria-live="polite" className="mt-4 rounded-xl border border-cyan-400/15 bg-[#0b1528] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs font-semibold text-cyan-300">Dataset-grounded answer</span><button type="button" onClick={downloadInsights} className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">↓ Save answer</button></div><p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-200">{insightAnswer}</p></div>}
               </section>
               <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,1fr)]">
                 <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><div className="mb-5 flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-bold">Performance trends</h3><p className="mt-1 text-xs text-slate-400">Actual {metric || "metric"} totals grouped by {date || "period"}</p></div><div className="flex rounded-lg border border-slate-700 bg-[#0e172b] p-1">{(["area","line","bar"] as const).map(mode=><button key={mode} type="button" onClick={()=>setChartMode(mode)} aria-pressed={chartMode===mode} className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize ${chartMode===mode ? "bg-cyan-500/20 text-cyan-200" : "text-slate-400 hover:text-white"}`}>{mode}</button>)}</div></div><ChartPanel data={trend} title={metric || "Metric"} mode={chartMode}/></section>
