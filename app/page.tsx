@@ -3,8 +3,8 @@ import FileUpload from "./FileUpload";
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen px-6 py-12">
-      <div className="mx-auto w-full max-w-[1800px]">
+    <main className="min-h-screen px-4 py-6">
+  <div className="mx-auto w-full max-w-none">
         {/* Header */}
         <header className="mb-16 flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">
