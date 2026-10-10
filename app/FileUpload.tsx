@@ -1,48 +1,51 @@
-
 "use client";
 
 import { useMemo, useState, type ChangeEvent } from "react";
 
 type DataRow = Record<string, string | number | boolean | null>;
-
+type Point = { label: string; value: number };
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const palette = ["#23d8ef", "#a879ff", "#fa59d1", "#4e8bff", "#ffb76b", "#38e5a1", "#f77b8e"];
 
-function numericValue(value: DataRow[string]): number | null {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : null;
-  }
-
-  if (typeof value === "string") {
-    const cleaned = value.trim().replace(/[₹$,\s]/g, "");
-
-    if (cleaned === "") return null;
-
-    const number = Number(cleaned);
-    return Number.isFinite(number) ? number : null;
-  }
-
-  return null;
+function numberOf(value: DataRow[string]): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const cleaned = value.trim().replace(/[₹$,%\s,]/g, "");
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-IN", {
-    maximumFractionDigits: 2,
-  }).format(value);
+const format = (n: number) => new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(n);
+const compact = (n: number) => new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+function detect(cols: string[], patterns: string[]) {
+  return cols.find((col) => patterns.some((p) => col.toLowerCase().replace(/[^a-z0-9]/g, "").includes(p))) || "";
 }
-
-function shortNumber(value: number) {
-  return new Intl.NumberFormat("en-IN", {
-    notation: "compact",
-    maximumFractionDigits: 2,
-  }).format(value);
+function dateOrder(label: string): number | null {
+  const time = Date.parse(label);
+  return Number.isFinite(time) ? time : null;
 }
-
-function detectColumn(columns: string[], patterns: string[]) {
-  return columns.find((column) =>
-    patterns.some((pattern) =>
-      column.toLowerCase().replace(/[^a-z0-9]/g, "").includes(pattern)
-    )
-  );
+function ChartPanel({ data, title }: { data: Point[]; title: string }) {
+  if (!data.length) return <div className="flex h-64 items-center justify-center text-sm text-slate-500">Select a date column and numeric metric to see trends.</div>;
+  const width = 800, height = 260, left = 18, right = 18, top = 25, bottom = 35;
+  const values = data.map((d) => d.value);
+  let min = Math.min(...values), max = Math.max(...values);
+  const pad = Math.max((max - min) * 0.15, Math.abs(max) * 0.05, 1);
+  min -= pad; max += pad;
+  const coords = data.map((d, i) => ({ x: left + (data.length === 1 ? 0.5 : i / (data.length - 1)) * (width - left - right), y: top + (1 - (d.value - min) / (max - min)) * (height - top - bottom), ...d }));
+  const path = coords.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
+  const area = `${path} L${coords[coords.length - 1].x},${height - bottom} L${coords[0].x},${height - bottom} Z`;
+  const latest = values.length > 1 ? values[values.length - 1] - values[values.length - 2] : 0;
+  return <div>
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-slate-400">{title} over {data.length} periods</span><span className={`rounded-full px-3 py-1 text-xs font-semibold ${latest < 0 ? "bg-rose-400/10 text-rose-300" : latest > 0 ? "bg-emerald-400/10 text-emerald-300" : "bg-slate-700 text-slate-300"}`}>{latest > 0 ? "▲" : latest < 0 ? "▼" : "—"} {compact(Math.abs(latest))} latest change</span></div>
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-64 w-full" role="img" aria-label={`${title} trend chart`}>
+      <defs><linearGradient id="trendArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#24d7ec" stopOpacity=".28"/><stop offset="100%" stopColor="#9164f7" stopOpacity="0"/></linearGradient><linearGradient id="trendStroke" x1="0" y1="0" x2="1" y2="0"><stop stopColor="#a879ff"/><stop offset="100%" stopColor="#21e4ed"/></linearGradient></defs>
+      {[0,1,2,3,4].map((i) => <g key={i}><line x1={left} x2={width-right} y1={top+i*(height-top-bottom)/4} y2={top+i*(height-top-bottom)/4} stroke="#26344d" strokeDasharray="4 6"/><text x={left+4} y={top+i*(height-top-bottom)/4-5} fill="#71829e" fontSize="10">{compact(max-i*(max-min)/4)}</text></g>)}
+      {coords.length > 1 && <><path d={area} fill="url(#trendArea)"/><path d={path} fill="none" stroke="url(#trendStroke)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/></>}
+      {coords.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={i === coords.length-1 ? 5 : 2.5} fill={i && p.value < coords[i-1].value ? "#fb7185" : "#22d3ee"} stroke="#111a30" strokeWidth="2"><title>{p.label}: {format(p.value)}</title></circle>)}
+      {[0,Math.floor((coords.length-1)/2),coords.length-1].filter((v,i,a)=>a.indexOf(v)===i).map((i) => <text key={i} x={coords[i].x} y={height-7} textAnchor={i===0 ? "start" : i===coords.length-1 ? "end" : "middle"} fontSize="11" fill="#94a3b8">{coords[i].label.slice(0,16)}</text>)}
+    </svg>
+    <div className="mt-2 flex gap-4 text-xs text-slate-400"><span><span className="mr-2 inline-block h-2 w-2 rounded-full bg-cyan-400"/>Higher / stable</span><span><span className="mr-2 inline-block h-2 w-2 rounded-full bg-rose-400"/>Lower than previous period</span></div>
+  </div>;
 }
 
 export default function FileUpload() {
@@ -51,711 +54,129 @@ export default function FileUpload() {
   const [rows, setRows] = useState<DataRow[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const [categoryColumn, setCategoryColumn] = useState("");
-  const [metricColumn, setMetricColumn] = useState("");
-  const [dateColumn, setDateColumn] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [metric, setMetric] = useState("");
+  const [category, setCategory] = useState("");
+  const [date, setDate] = useState("");
+  const [filter, setFilter] = useState("All");
+  const [view, setView] = useState<"overview" | "data">("overview");
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    setError("");
-    setFileName("");
-    setColumns([]);
-    setRows([]);
-    setLoading(true);
-    setSelectedCategory("All");
-
+    setError(""); setFileName(""); setRows([]); setColumns([]); setLoading(true); setFilter("All"); setView("overview");
     try {
       const extension = file.name.split(".").pop()?.toLowerCase();
-
-      if (extension !== "xlsx" && extension !== "csv") {
-        throw new Error("Please upload an XLSX or CSV file.");
-      }
-
-      if (file.size > MAX_FILE_SIZE) {
-        throw new Error("File must be smaller than 10 MB.");
-      }
-
-      if (file.size === 0) {
-        throw new Error("The selected file is empty.");
-      }
-
-      let parsedRows: DataRow[] = [];
-
+      if (extension !== "csv" && extension !== "xlsx") throw new Error("Please upload an XLSX or CSV file.");
+      if (file.size === 0) throw new Error("The selected file is empty.");
+      if (file.size > MAX_FILE_SIZE) throw new Error("File must be 10 MB or smaller.");
+      let parsed: DataRow[] = [];
       if (extension === "csv") {
         const Papa = (await import("papaparse")).default;
-        const text = await file.text();
-
-        const result = Papa.parse<DataRow>(text, {
-          header: true,
-          skipEmptyLines: "greedy",
-          dynamicTyping: true,
-        });
-
-        if (result.errors.length > 0) {
-          throw new Error(result.errors[0].message);
-        }
-
-        parsedRows = result.data;
+        const result = Papa.parse<DataRow>(await file.text(), { header: true, skipEmptyLines: "greedy", dynamicTyping: true, transformHeader: (header) => header.trim() });
+        if (result.errors.length) throw new Error(result.errors[0].message);
+        parsed = result.data;
       } else {
         const ExcelJS = (await import("exceljs")).default;
         const workbook = new ExcelJS.Workbook();
-        const buffer = await file.arrayBuffer();
-
-        await workbook.xlsx.load(buffer);
-
-        const worksheet = workbook.worksheets[0];
-
-        if (!worksheet) {
-          throw new Error("No worksheet found in the Excel file.");
-        }
-
+        await workbook.xlsx.load(await file.arrayBuffer());
+        const sheet = workbook.worksheets[0];
+        if (!sheet) throw new Error("No worksheet found in this Excel file.");
         const headers: string[] = [];
-
-        worksheet.getRow(1).eachCell(
-          { includeEmpty: true },
-          (cell, index) => {
-            headers[index - 1] = String(
-              cell.text || `Column ${index}`
-            );
-          }
-        );
-
-        worksheet.eachRow((row, rowNumber) => {
+        sheet.getRow(1).eachCell({ includeEmpty: true }, (cell, index) => { headers[index-1] = cell.text.trim() || `Column ${index}`; });
+        sheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
-
           const record: DataRow = {};
-
           headers.forEach((header, index) => {
-            const cell = row.getCell(index + 1);
-            const value = cell.value;
-
-            record[header] =
-              typeof value === "number" ||
-              typeof value === "boolean" ||
-              typeof value === "string"
-                ? value
-                : value == null
-                  ? null
-                  : cell.text;
+            const cell = row.getCell(index+1), value = cell.value;
+            record[header] = typeof value === "number" || typeof value === "boolean" || typeof value === "string" ? value : value == null ? null : cell.text;
           });
-
-          parsedRows.push(record);
+          parsed.push(record);
         });
       }
-
-      if (parsedRows.length === 0) {
-        throw new Error("No data rows found in this file.");
-      }
-
-      const detectedColumns = Array.from(
-        new Set(parsedRows.flatMap((row) => Object.keys(row)))
-      ).filter((column) => column.trim() !== "");
-
-      if (detectedColumns.length === 0) {
-        throw new Error("No columns were detected.");
-      }
-
-      const numericColumns = detectedColumns.filter((column) =>
-        parsedRows.some((row) => numericValue(row[column]) !== null)
-      );
-
-      const preferredMetric =
-        detectColumn(numericColumns, [
-          "revenue",
-          "saleskg",
-          "salesamount",
-          "amount",
-          "sales",
-          "profit",
-          "quantity",
-          "total",
-        ]) ||
-        numericColumns[0] ||
-        "";
-
-      const preferredCategory =
-        detectColumn(detectedColumns, [
-          "station",
-          "category",
-          "product",
-          "department",
-          "region",
-          "city",
-        ]) ||
-        detectedColumns.find(
-          (column) =>
-            column !== preferredMetric &&
-            !numericColumns.includes(column)
-        ) ||
-        "";
-
-      const preferredDate =
-        detectColumn(detectedColumns, [
-          "date",
-          "month",
-          "period",
-          "year",
-        ]) || "";
-
-      setColumns(detectedColumns);
-      setRows(parsedRows);
-      setFileName(file.name);
-      setMetricColumn(preferredMetric);
-      setCategoryColumn(preferredCategory);
-      setDateColumn(preferredDate);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to process this file."
-      );
-    } finally {
-      setLoading(false);
-      event.target.value = "";
-    }
+      if (!parsed.length) throw new Error("No data rows found in this file.");
+      const detected = Array.from(new Set(parsed.flatMap((row) => Object.keys(row)))).filter(Boolean);
+      if (!detected.length) throw new Error("No columns found in this file.");
+      const numeric = detected.filter((col) => parsed.some((row) => numberOf(row[col]) !== null));
+      const m = detect(numeric, ["revenue", "saleskg", "salesamount", "amount", "sales", "profit", "quantity", "total"]) || numeric[0] || "";
+      const c = detect(detected, ["station", "category", "product", "department", "region", "city"]) || detected.find((col) => col !== m && !numeric.includes(col)) || "";
+      const d = detect(detected, ["date", "month", "period", "year"]);
+      setColumns(detected); setRows(parsed); setMetric(m); setCategory(c); setDate(d); setFileName(file.name);
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to read the file."); }
+    finally { setLoading(false); event.target.value = ""; }
   }
 
-  const numericColumns = useMemo(
-    () =>
-      columns.filter((column) =>
-        rows.some((row) => numericValue(row[column]) !== null)
-      ),
-    [columns, rows]
-  );
+  const numericColumns = useMemo(() => columns.filter((col) => rows.some((r) => numberOf(r[col]) !== null)), [columns,rows]);
+  const categories = useMemo(() => category ? Array.from(new Set(rows.map((r) => String(r[category] ?? "Unknown")))).sort() : [], [rows,category]);
+  const filtered = useMemo(() => !category || filter === "All" ? rows : rows.filter((r) => String(r[category] ?? "Unknown") === filter), [rows,category,filter]);
+  const stats = useMemo(() => {
+    const values = filtered.map((r) => numberOf(r[metric])).filter((n): n is number => n !== null);
+    const total = values.reduce((sum,n)=>sum+n,0);
+    return { total, average: values.length ? total/values.length : 0, maximum: values.length ? Math.max(...values) : 0, count: filtered.length, valid: values.length };
+  }, [filtered,metric]);
+  const groups = useMemo(() => {
+    if (!category || !metric) return [];
+    const map = new Map<string,number>();
+    filtered.forEach((r) => { const n = numberOf(r[metric]); if (n === null) return; const key = String(r[category] ?? "Unknown"); map.set(key,(map.get(key) ?? 0)+n); });
+    return Array.from(map,([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);
+  }, [filtered,category,metric]);
+  const trend = useMemo(() => {
+    if (!date || !metric) return [];
+    const map = new Map<string,number>();
+    filtered.forEach((r)=> { const label=String(r[date] ?? "").trim(), n=numberOf(r[metric]); if (!label || n === null) return; map.set(label,(map.get(label) ?? 0)+n); });
+    return Array.from(map,([label,value])=>({label,value})).sort((a,b)=> { const ad=dateOrder(a.label),bd=dateOrder(b.label); return ad !== null && bd !== null ? ad-bd : a.label.localeCompare(b.label,undefined,{numeric:true}); });
+  },[filtered,date,metric]);
+  const maxGroup = Math.max(1,...groups.map((g)=>Math.abs(g.value)));
+  const positiveGroups = groups.filter((g)=>g.value>0);
+  const donutTotal = positiveGroups.reduce((sum,g)=>sum+g.value,0);
+  let donutCursor = 0;
+  const donut = positiveGroups.length && donutTotal > 0 ? `conic-gradient(${positiveGroups.slice(0,7).map((g,i)=>{ const start=donutCursor; donutCursor += g.value/donutTotal*100; return `${palette[i%palette.length]} ${start}% ${donutCursor}%`; }).join(", ")}${positiveGroups.length>7 ? `, #475569 ${donutCursor}% 100%` : ""})` : "conic-gradient(#26344d 0% 100%)";
+  const lastChange = trend.length>1 ? trend[trend.length-1].value-trend[trend.length-2].value : null;
+  const cardData = [
+    { label: `Total ${metric || "Metric"}`, value: compact(stats.total), detail: `${format(stats.valid)} valid values`, gradient: "from-fuchsia-500 via-purple-500 to-violet-500" },
+    { label: "Average per record", value: compact(stats.average), detail: "Calculated from valid values", gradient: "from-cyan-400 via-sky-500 to-blue-600" },
+    { label: "Highest record", value: compact(stats.maximum), detail: "Maximum individual value", gradient: "from-blue-500 via-indigo-500 to-violet-600" },
+    { label: "Records analyzed", value: format(stats.count), detail: `${format(rows.length)} in original file`, gradient: "from-pink-500 via-rose-500 to-orange-400" },
+  ];
 
-  const categories = useMemo(() => {
-    if (!categoryColumn) return [];
-
-    return Array.from(
-      new Set(
-        rows.map((row) => String(row[categoryColumn] ?? "Unknown"))
-      )
-    ).sort();
-  }, [rows, categoryColumn]);
-
-  const filteredRows = useMemo(() => {
-    if (!categoryColumn || selectedCategory === "All") {
-      return rows;
-    }
-
-    return rows.filter(
-      (row) =>
-        String(row[categoryColumn] ?? "Unknown") ===
-        selectedCategory
-    );
-  }, [rows, categoryColumn, selectedCategory]);
-
-  const statistics = useMemo(() => {
-    const values = filteredRows
-      .map((row) => numericValue(row[metricColumn]))
-      .filter((value): value is number => value !== null);
-
-    const total = values.reduce((sum, value) => sum + value, 0);
-
-    return {
-      total,
-      average: values.length ? total / values.length : 0,
-      maximum: values.length ? Math.max(...values) : 0,
-      count: filteredRows.length,
-      validCount: values.length,
-    };
-  }, [filteredRows, metricColumn]);
-
-  const categoryData = useMemo(() => {
-    if (!categoryColumn || !metricColumn) return [];
-
-    const totals = new Map<string, number>();
-
-    for (const row of filteredRows) {
-      const category = String(row[categoryColumn] ?? "Unknown");
-      const value = numericValue(row[metricColumn]);
-
-      if (value === null) continue;
-
-      totals.set(category, (totals.get(category) ?? 0) + value);
-    }
-
-    return Array.from(totals.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10);
-  }, [filteredRows, categoryColumn, metricColumn]);
-
-  const trendData = useMemo(() => {
-    if (!dateColumn || !metricColumn) return [];
-
-    const totals = new Map<string, number>();
-
-    for (const row of filteredRows) {
-      const date = String(row[dateColumn] ?? "").trim();
-      const value = numericValue(row[metricColumn]);
-
-      if (!date || value === null) continue;
-
-      totals.set(date, (totals.get(date) ?? 0) + value);
-    }
-
-    return Array.from(totals.entries())
-      .map(([date, value]) => ({ date, value }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  }, [filteredRows, dateColumn, metricColumn]);
-
-  const maxCategoryValue = Math.max(
-    0,
-    ...categoryData.map((item) => Math.abs(item.value))
-  );
-
-  const trendValues = trendData.map((item) => item.value);
-  const trendMin = trendValues.length
-    ? Math.min(...trendValues)
-    : 0;
-  const trendMax = trendValues.length
-    ? Math.max(...trendValues)
-    : 0;
-
-  const trendPoints = trendData
-    .map((item, index) => {
-      const x =
-        trendData.length === 1
-          ? 50
-          : 5 + (index / (trendData.length - 1)) * 90;
-
-      const y =
-        trendMax === trendMin
-          ? 50
-          : 90 -
-            ((item.value - trendMin) /
-              (trendMax - trendMin)) *
-              80;
-
-      return `${x},${y}`;
-    })
-    .join(" ");
-
-  return (
-    <div className="mx-auto max-w-6xl space-y-8 text-white">
-      <section className="rounded-2xl border border-slate-700 bg-slate-900 p-6">
-        <h2 className="mb-2 text-2xl font-bold">
-          Upload your dataset
-        </h2>
-
-        <p className="mb-6 text-sm text-slate-400">
-          Upload an Excel (.xlsx) or CSV file, up to 10 MB.
-          Files are processed in your browser.
-        </p>
-
-        <input
-          type="file"
-          accept=".xlsx,.csv"
-          onChange={handleUpload}
-          disabled={loading}
-          className="block w-full rounded-lg border border-dashed border-slate-600 p-4 text-sm"
-        />
-
-        {loading && (
-          <p className="mt-4 text-sky-400">
-            Processing your file...
-          </p>
-        )}
-
-        {error && (
-          <p role="alert" className="mt-4 text-red-400">
-            {error}
-          </p>
-        )}
-
-        {fileName && (
-          <div className="mt-5 rounded-lg bg-slate-800 p-4">
-            <p className="font-semibold text-sky-400">
-              {fileName}
-            </p>
-            <p className="mt-1 text-sm text-slate-400">
-              {rows.length} rows · {columns.length} columns
-            </p>
+  return <div className="mx-auto max-w-7xl text-slate-100">
+    <div className="overflow-hidden rounded-[28px] border border-slate-700/60 bg-[#0d1425] shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
+      <div className="flex flex-col lg:flex-row">
+        <aside className="w-full shrink-0 border-b border-slate-700/60 bg-[#10162a] p-6 lg:w-56 lg:border-b-0 lg:border-r">
+          <div className="mb-8 flex items-center gap-3"><div className="rounded-xl bg-gradient-to-br from-fuchsia-500 to-cyan-400 p-2 text-lg">◈</div><div><div className="font-bold tracking-tight">DataVision <span className="text-cyan-400">AI</span></div><div className="text-[10px] uppercase tracking-[.18em] text-slate-500">Analytics studio</div></div></div>
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-[.2em] text-slate-500">Workspace</div>
+          <div className="flex gap-2 lg:flex-col">
+            <button onClick={()=>setView("overview")} className={`rounded-xl px-4 py-3 text-left text-sm transition ${view==="overview" ? "bg-gradient-to-r from-purple-500/30 to-cyan-500/10 font-semibold text-fuchsia-200 ring-1 ring-purple-500/30" : "text-slate-400 hover:bg-slate-800"}`}>◫ &nbsp; Overview</button>
+            <button onClick={()=>setView("data")} className={`rounded-xl px-4 py-3 text-left text-sm transition ${view==="data" ? "bg-gradient-to-r from-purple-500/30 to-cyan-500/10 font-semibold text-fuchsia-200 ring-1 ring-purple-500/30" : "text-slate-400 hover:bg-slate-800"}`}>▤ &nbsp; Data explorer</button>
           </div>
-        )}
-      </section>
-
-      {fileName && (
-        <>
-          <section className="rounded-2xl border border-slate-700 bg-slate-900 p-6">
-            <h2 className="mb-5 text-xl font-bold">
-              Dashboard controls
-            </h2>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <div>
-                <label className="mb-2 block text-sm text-slate-400">
-                  Metric to analyze
-                </label>
-
-                <select
-                  value={metricColumn}
-                  onChange={(event) =>
-                    setMetricColumn(event.target.value)
-                  }
-                  className="w-full rounded-lg border border-slate-600 bg-slate-800 p-3"
-                >
-                  {numericColumns.length === 0 && (
-                    <option value="">No numeric columns</option>
-                  )}
-
-                  {numericColumns.map((column) => (
-                    <option key={column} value={column}>
-                      {column}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm text-slate-400">
-                  Group by
-                </label>
-
-                <select
-                  value={categoryColumn}
-                  onChange={(event) => {
-                    setCategoryColumn(event.target.value);
-                    setSelectedCategory("All");
-                  }}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-800 p-3"
-                >
-                  <option value="">None</option>
-
-                  {columns.map((column) => (
-                    <option key={column} value={column}>
-                      {column}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm text-slate-400">
-                  Date / trend column
-                </label>
-
-                <select
-                  value={dateColumn}
-                  onChange={(event) =>
-                    setDateColumn(event.target.value)
-                  }
-                  className="w-full rounded-lg border border-slate-600 bg-slate-800 p-3"
-                >
-                  <option value="">None</option>
-
-                  {columns.map((column) => (
-                    <option key={column} value={column}>
-                      {column}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          <div className="mt-9 hidden rounded-2xl border border-purple-400/20 bg-gradient-to-br from-purple-500/10 to-cyan-500/5 p-4 lg:block"><div className="text-sm font-semibold">Your private workspace</div><p className="mt-2 text-xs leading-5 text-slate-400">Files are parsed in your browser. This version does not save uploaded datasets.</p></div>
+          <div className="mt-8 text-xs text-slate-500">Designed by Itish</div>
+        </aside>
+        <main className="min-w-0 flex-1 space-y-6 bg-[radial-gradient(ellipse_at_top_right,rgba(114,57,202,0.10),transparent_50%)] p-4 sm:p-7">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xs font-semibold uppercase tracking-[.2em] text-cyan-400">Intelligent business analytics</div><h2 className="mt-2 text-2xl font-bold sm:text-3xl">{view==="overview" ? "Analytics overview" : "Data explorer"}</h2><p className="mt-1 text-sm text-slate-400">{fileName ? `Analyzing ${fileName}` : "Upload a dataset to bring your dashboard to life"}</p></div><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-300">● {fileName ? "Dataset loaded" : "Ready to upload"}</span></div>
+          <div className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold">Import your dataset</h3><p className="mt-1 text-xs text-slate-400">CSV or Excel (.xlsx) · Up to 10 MB · Browser-based processing</p></div>{fileName && <span className="max-w-full break-all rounded-lg bg-cyan-400/10 px-3 py-2 text-xs text-cyan-300">✓ {fileName}</span>}</div><input aria-label="Upload CSV or Excel dataset" type="file" accept=".csv,.xlsx" onChange={handleUpload} disabled={loading} className="mt-4 block w-full cursor-pointer rounded-xl border border-dashed border-purple-400/40 bg-[#0e172b] p-4 text-sm text-slate-300 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-gradient-to-r file:from-fuchsia-500 file:to-purple-600 file:px-4 file:py-2 file:font-semibold file:text-white"/>{loading && <p className="mt-3 text-sm text-cyan-300">Processing file…</p>}{error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}</div>
+          {fileName && <>
+            <div className="grid gap-3 rounded-2xl border border-slate-700/70 bg-[#151e34] p-4 sm:grid-cols-2 xl:grid-cols-4">
+              <label className="text-xs text-slate-400">Metric<select value={metric} onChange={(e)=>setMetric(e.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-[#0e172b] p-2.5 text-sm text-white"><option value="">No numeric metric</option>{numericColumns.map((col)=><option key={col} value={col}>{col}</option>)}</select></label>
+              <label className="text-xs text-slate-400">Group by<select value={category} onChange={(e)=>{setCategory(e.target.value);setFilter("All");}} className="mt-2 w-full rounded-lg border border-slate-700 bg-[#0e172b] p-2.5 text-sm text-white"><option value="">None</option>{columns.map((col)=><option key={col} value={col}>{col}</option>)}</select></label>
+              <label className="text-xs text-slate-400">Time / trend<select value={date} onChange={(e)=>setDate(e.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-[#0e172b] p-2.5 text-sm text-white"><option value="">None</option>{columns.map((col)=><option key={col} value={col}>{col}</option>)}</select></label>
+              <label className="text-xs text-slate-400">Filter category<select value={filter} onChange={(e)=>setFilter(e.target.value)} disabled={!category} className="mt-2 w-full rounded-lg border border-slate-700 bg-[#0e172b] p-2.5 text-sm text-white disabled:opacity-50"><option value="All">All categories</option>{categories.map((cat)=><option key={cat} value={cat}>{cat}</option>)}</select></label>
             </div>
-
-            {categoryColumn && (
-              <div className="mt-5">
-                <label className="mb-2 block text-sm text-slate-400">
-                  Filter {categoryColumn}
-                </label>
-
-                <select
-                  value={selectedCategory}
-                  onChange={(event) =>
-                    setSelectedCategory(event.target.value)
-                  }
-                  className="w-full rounded-lg border border-slate-600 bg-slate-800 p-3 md:max-w-sm"
-                >
-                  <option value="All">All categories</option>
-
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
+            {view==="overview" ? <>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cardData.map((card,i)=><div key={card.label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${card.gradient} p-5 shadow-lg`}><div className="absolute -right-7 -top-9 h-32 w-32 rounded-full bg-white/10"/><div className="relative"><div className="text-xs font-semibold text-white/85">{card.label}</div><div className="mt-5 break-words text-3xl font-extrabold tracking-tight text-white">{card.value}</div><div className="mt-3 text-xs text-white/80">{card.detail}</div></div><span className="absolute right-4 bottom-4 text-xl text-white/40">{["◈","⌁","↗","▦"][i]}</span></div>)}</div>
+              <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr]">
+                <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><div className="mb-5"><h3 className="text-lg font-bold">Performance trends</h3><p className="mt-1 text-xs text-slate-400">Actual {metric || "metric"} totals grouped by {date || "period"}</p></div><ChartPanel data={trend} title={metric || "Metric"}/></section>
+                <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><h3 className="text-lg font-bold">Category distribution</h3><p className="mt-1 text-xs text-slate-400">Share of positive {metric || "metric"} totals</p><div className="mx-auto mt-7 flex h-48 w-48 items-center justify-center rounded-full" style={{background:donut}}><div className="flex h-32 w-32 flex-col items-center justify-center rounded-full bg-[#151e34] text-center"><div className="text-2xl font-bold">{compact(donutTotal)}</div><div className="text-xs text-slate-400">Positive total</div></div></div><div className="mt-6 grid gap-2">{positiveGroups.slice(0,5).map((g,i)=><div key={g.label} className="flex items-center justify-between gap-3 text-xs"><span className="flex min-w-0 items-center gap-2 text-slate-300"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{backgroundColor:palette[i%palette.length]}}/><span className="truncate">{g.label}</span></span><span className="font-semibold">{donutTotal ? (g.value/donutTotal*100).toFixed(1) : "0"}%</span></div>)}{!positiveGroups.length && <p className="text-center text-sm text-slate-500">No positive category totals to display</p>}</div></section>
               </div>
-            )}
-          </section>
-
-          <section>
-            <div className="mb-5">
-              <h2 className="text-2xl font-bold">
-                Analytics Dashboard
-              </h2>
-
-              <p className="mt-1 text-sm text-slate-400">
-                Calculated directly from your uploaded dataset
-              </p>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                {
-                  label: `Total ${metricColumn || "Metric"}`,
-                  value: formatNumber(statistics.total),
-                },
-                {
-                  label: "Average per valid record",
-                  value: formatNumber(statistics.average),
-                },
-                {
-                  label: "Maximum record value",
-                  value: formatNumber(statistics.maximum),
-                },
-                {
-                  label: "Records",
-                  value: formatNumber(statistics.count),
-                },
-              ].map((card) => (
-                <div
-                  key={card.label}
-                  className="rounded-2xl border border-slate-700 bg-slate-900 p-5"
-                >
-                  <p className="text-sm text-slate-400">
-                    {card.label}
-                  </p>
-
-                  <p className="mt-3 break-words text-2xl font-bold text-sky-400">
-                    {card.value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-700 bg-slate-900 p-6">
-              <h3 className="mb-2 text-xl font-bold">
-                Performance by {categoryColumn || "Category"}
-              </h3>
-
-              <p className="mb-6 text-xs text-slate-400">
-                Sum of {metricColumn || "selected metric"} by group
-              </p>
-
-              {categoryData.length > 0 ? (
-                <div className="space-y-5">
-                  {categoryData.map((item) => {
-                    const width =
-                      maxCategoryValue === 0
-                        ? 0
-                        : (Math.abs(item.value) /
-                            maxCategoryValue) *
-                          100;
-
-                    return (
-                      <div key={item.name}>
-                        <div className="mb-2 flex items-start justify-between gap-3 text-sm">
-                          <span className="break-words text-slate-300">
-                            {item.name}
-                          </span>
-
-                          <span className="shrink-0 font-semibold text-sky-400">
-                            {shortNumber(item.value)}
-                          </span>
-                        </div>
-
-                        <div className="h-3 overflow-hidden rounded-full bg-slate-800">
-                          <div
-                            className={`h-full rounded-full ${
-                              item.value < 0
-                                ? "bg-rose-400"
-                                : "bg-sky-400"
-                            }`}
-                            style={{ width: `${width}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400">
-                  Select a grouping column and numeric metric
-                  to display this chart.
-                </p>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-slate-700 bg-slate-900 p-6">
-              <h3 className="mb-2 text-xl font-bold">
-                Performance Trend
-              </h3>
-
-              <p className="mb-6 text-xs text-slate-400">
-                Sum of {metricColumn || "metric"} by{" "}
-                {dateColumn || "date"}
-              </p>
-
-              {trendData.length > 0 ? (
-                <>
-                  <div className="mb-3 flex justify-between gap-3 text-xs text-slate-400">
-                    <span>
-                      Min: {shortNumber(trendMin)}
-                    </span>
-
-                    <span>
-                      Max: {shortNumber(trendMax)}
-                    </span>
-                  </div>
-
-                  <svg
-                    viewBox="0 0 100 100"
-                    preserveAspectRatio="none"
-                    className="h-64 w-full overflow-visible"
-                    role="img"
-                    aria-label={`Trend chart for ${metricColumn}`}
-                  >
-                    {[10, 30, 50, 70, 90].map((y) => (
-                      <line
-                        key={y}
-                        x1="0"
-                        y1={y}
-                        x2="100"
-                        y2={y}
-                        stroke="#334155"
-                        strokeWidth="0.35"
-                        strokeDasharray="1 1"
-                      />
-                    ))}
-
-                    {trendData.length === 1 ? (
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="1.5"
-                        fill="#38bdf8"
-                      />
-                    ) : (
-                      <polyline
-                        points={trendPoints}
-                        fill="none"
-                        stroke="#38bdf8"
-                        strokeWidth="1.3"
-                        strokeLinejoin="round"
-                        strokeLinecap="round"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    )}
-                  </svg>
-
-                  <div className="mt-4 flex justify-between gap-3 text-xs text-slate-400">
-                    <span className="break-all">
-                      {trendData[0]?.date}
-                    </span>
-
-                    <span className="break-all text-right">
-                      {trendData[trendData.length - 1]?.date}
-                    </span>
-                  </div>
-
-                  <p className="mt-4 text-xs text-slate-500">
-                    {trendData.length} distinct periods
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm text-slate-400">
-                  Select a date column and numeric metric
-                  to display the trend.
-                </p>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-700 bg-slate-900 p-6">
-            <h3 className="mb-2 text-xl font-bold">
-              Data Quality Summary
-            </h3>
-
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="rounded-lg bg-slate-800 p-4">
-                <p className="text-sm text-slate-400">
-                  Total rows
-                </p>
-
-                <p className="mt-2 text-xl font-semibold">
-                  {formatNumber(rows.length)}
-                </p>
+              <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr]">
+                <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><h3 className="text-lg font-bold">Performance by {category || "category"}</h3><p className="mt-1 text-xs text-slate-400">Top 8 categories by total {metric || "metric"}</p><div className="mt-7 space-y-5">{groups.slice(0,8).map((g,i)=><div key={g.label}><div className="mb-2 flex justify-between gap-3 text-xs"><span className="truncate text-slate-300" title={g.label}>{g.label}</span><span className={g.value<0 ? "text-rose-300" : "text-slate-200"}>{compact(g.value)}</span></div><div className="h-2.5 overflow-hidden rounded-full bg-[#0e172b]"><div className="h-full rounded-full transition-all duration-500" style={{width:`${Math.abs(g.value)/maxGroup*100}%`,background:g.value<0 ? "#fb7185" : palette[i%palette.length]}}/></div></div>)}{!groups.length && <p className="text-sm text-slate-500">Choose a grouping column and numeric metric.</p>}</div></section>
+                <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><h3 className="text-lg font-bold">Performance signals</h3><p className="mt-1 text-xs text-slate-400">Changes in the selected metric</p><div className={`mt-6 rounded-xl border p-5 ${lastChange===null ? "border-slate-700 bg-slate-800/40" : lastChange<0 ? "border-rose-400/20 bg-rose-400/10" : lastChange>0 ? "border-emerald-400/20 bg-emerald-400/10" : "border-slate-700 bg-slate-800/40"}`}><div className="text-sm text-slate-300">Latest period change</div><div className={`mt-3 text-3xl font-bold ${lastChange===null ? "text-slate-300" : lastChange<0 ? "text-rose-300" : lastChange>0 ? "text-emerald-300" : "text-slate-300"}`}>{lastChange===null ? "N/A" : `${lastChange>0 ? "+" : ""}${compact(lastChange)}`}</div><div className="mt-2 text-xs text-slate-400">{lastChange===null ? "At least two time periods are needed" : lastChange<0 ? "Lower than the previous period" : lastChange>0 ? "Higher than the previous period" : "Unchanged from the previous period"}</div></div><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#0e172b] p-4"><div className="text-xs text-slate-400">Valid values</div><div className="mt-2 text-xl font-bold text-cyan-300">{format(stats.valid)}</div></div><div className="rounded-xl bg-[#0e172b] p-4"><div className="text-xs text-slate-400">Missing values</div><div className="mt-2 text-xl font-bold text-fuchsia-300">{format(stats.count-stats.valid)}</div></div></div><p className="mt-4 text-xs leading-5 text-slate-500">Red indicates a numerical decline, not necessarily poor business performance. Interpretation depends on the metric.</p></section>
               </div>
-
-              <div className="rounded-lg bg-slate-800 p-4">
-                <p className="text-sm text-slate-400">
-                  Valid metric values (filtered)
-                </p>
-
-                <p className="mt-2 text-xl font-semibold">
-                  {formatNumber(statistics.validCount)}
-                </p>
-              </div>
-
-              <div className="rounded-lg bg-slate-800 p-4">
-                <p className="text-sm text-slate-400">
-                  Missing / invalid metric values
-                </p>
-
-                <p className="mt-2 text-xl font-semibold">
-                  {formatNumber(
-                    statistics.count - statistics.validCount
-                  )}
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-700 bg-slate-900 p-6">
-            <h3 className="mb-2 text-xl font-bold">
-              Data Preview
-            </h3>
-
-            <p className="mb-5 text-sm text-slate-400">
-              First 10 matching rows
-            </p>
-
-            <div className="overflow-x-auto rounded-lg border border-slate-700">
-              <table className="w-full border-collapse text-left text-sm">
-                <thead className="bg-slate-800">
-                  <tr>
-                    {columns.map((column) => (
-                      <th
-                        key={column}
-                        className="whitespace-nowrap p-3"
-                      >
-                        {column}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filteredRows.slice(0, 10).map((row, index) => (
-                    <tr
-                      key={index}
-                      className="border-t border-slate-700"
-                    >
-                      {columns.map((column) => (
-                        <td
-                          key={column}
-                          className="min-w-24 p-3"
-                        >
-                          {row[column] == null
-                            ? "—"
-                            : String(row[column])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      )}
+            </> : <section className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><h3 className="text-lg font-bold">Dataset explorer</h3><p className="mt-1 text-xs text-slate-400">Showing first 100 matching rows of {format(filtered.length)} · {columns.length} columns</p><div className="mt-5 max-h-[580px] overflow-auto rounded-xl border border-slate-700"><table className="min-w-full border-collapse text-left text-xs"><thead className="sticky top-0 bg-[#26304a] text-slate-200"><tr>{columns.map((col)=><th key={col} className="whitespace-nowrap border-b border-slate-600 p-3">{col}</th>)}</tr></thead><tbody>{filtered.slice(0,100).map((row,i)=><tr key={i} className="border-b border-slate-700/50 hover:bg-white/5">{columns.map((col)=><td key={col} className="min-w-28 max-w-60 break-words p-3 text-slate-300">{row[col] == null ? "—" : String(row[col])}</td>)}</tr>)}</tbody></table></div></section>}
+          </>}
+          {!fileName && <div className="grid gap-4 sm:grid-cols-3">{[{n:"01",title:"Upload",text:"Choose a CSV or Excel file."},{n:"02",title:"Analyze",text:"Metrics and groups are detected automatically."},{n:"03",title:"Explore",text:"View live charts, filters and trends."}].map((step)=><div key={step.n} className="rounded-2xl border border-slate-700/70 bg-[#151e34] p-5"><span className="text-xl font-bold text-purple-400">{step.n}</span><h3 className="mt-3 font-semibold">{step.title}</h3><p className="mt-2 text-xs leading-5 text-slate-400">{step.text}</p></div>)}</div>}
+          <footer className="border-t border-slate-700/60 pt-5 text-center text-xs text-slate-500">DataVision AI © 2026 · Designed by Itish · Dashboard values come from your uploaded data</footer>
+        </main>
+      </div>
     </div>
-  );
+  </div>;
 }
