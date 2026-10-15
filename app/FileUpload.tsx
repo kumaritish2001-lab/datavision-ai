@@ -1,4 +1,5 @@
 "use client";
+// DataVision AI - Restored working dashboard
 import { useMemo, useState, type ChangeEvent } from "react";
 type DataRow = Record<string, string | number | boolean | null>;
 type Point = { label: string; value: number };
